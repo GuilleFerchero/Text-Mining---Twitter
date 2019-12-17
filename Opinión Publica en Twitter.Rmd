@@ -1,0 +1,235 @@
+---
+title: "Opinión Publica en Twitter - Paso 2019"
+author: "Ferchero Juan Guillermo"
+date: "11/12/2019"
+output:
+  html_document: default
+  pdf_document: 
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+## Analizando Tweets
+
+El objetivo de este artículo consiste en brindar un esquema de trabajo que permita la extracción y análisis de tweets según un tópico o un usuario determinado. A través de un conjunto de librerías y funciones diseñadas, es posible automatizar el proceso para obtener un texto disponible para su evaluación.
+
+
+#Paso 1: Librerias y activar sesión
+
+Comenzamos por limpiar los objetos de la memoria, levantar las librerias necesarias y autentificar nuestra sesión de Twitter
+
+```{r inicio, message=FALSE, warning=FALSE}
+#se borran todos los objetos de la memoria
+
+rm(list =ls())
+
+#Se configuran los directorios de trabajo
+
+
+setwd("C:/Users/Guille/Dropbox/R/Script/Analisis de Sentimiento")
+
+
+#Se instalan librerias de trabajo y se autentifica la sesión
+
+
+library(twitteR)
+library("tidyverse")
+library(tm)
+library(ggwordcloud)
+library(proustr)
+library(syuzhet)
+library(SnowballC)
+library(knitr)
+library(tidytext)
+
+
+#Levantamos una versión de SDAL 
+
+sdal <- read.csv('sdal.csv', encoding = 'UTF-8')
+
+#Autentificamos sesión de twitter
+
+source("twitter-auth.r")
+setup_twitter_oauth(consumer_key, consumer_secret, access_token, access_secret)
+
+```
+
+# Paso 2: Extraer Tweets
+
+
+El siguiente paso consiste en crear funciones para automatizar el proceso de "escrapeo". La primera función extrae tweets segun un hashtag o tópico, mientras que la segunda levanta el timeline de un usuario en particular. 
+
+```{r}
+#Función para extraer tweets según tópico. Si el campo RT está vacio, no se incluyen retweets. La salida informa el rango temporal entre el primer tweet y el último.Si el campo save no está vacio, se genera un csv con la salida.
+
+tw_extrae <- function(x, maxcant, RT = NULL, save = NULL){
+  if(is.null(RT)){
+  tweets <- searchTwitter(paste0(x," exclude:retweets"), n=maxcant)
+  rt <- "No se incluyen retweets"
+  }
+  else{
+  tweets <- searchTwitter(paste0(x) , n=maxcant)
+  rt <- "Se incluyen retweets"
+  }
+  base <- twListToDF(tweets)
+  desde <- min(base[,5])
+  hasta <- max(base[,5])
+  cant <- nrow(base)
+  if(is.null(save)){
+    assign(paste0("tweets ", x), value = base, pos=1)
+    saveas <- " "
+  }else{
+  write.csv(base, paste0("tweets ", x,Sys.Date(),".csv"))
+  saveas <- "Se guardaron los tweets en la carpeta de trabajo"
+  assign(paste0("tweets ", x), value = base, pos=1)}
+  print(paste0("Se extrajeron ", cant, " tweets acerca de ", x," publicados desde el ", desde, " hasta el ", hasta, ". ", rt, " ", saveas))
+}
+
+
+
+#prueba de función
+
+tw_extrae('retenciones', 5000)
+
+#Función para extraer timelines de usuarios. Si el campo RT está vacio, no se incluyen retweets. La salida informa el rango temporal entre el primer tweet y el último. Si el campo save no está vacio, se genera un csv con la salida.
+
+tw_timeline <- function(x, maxcant, RT = NULL, save = NULL){
+  if(is.null(RT)){
+  tweets <- userTimeline(paste0(x," exclude:retweets"), n=maxcant)
+  rt <- "No se incluyen retweets"
+  }
+  else{
+  tweets <- userTimeline(paste0(x) , n=maxcant)
+  rt <- "Se incluyen retweets"
+  }
+  base <- twListToDF(tweets)
+  desde <- min(base[,5])
+  hasta <- max(base[,5])
+  cant <- nrow(base)
+  if(is.null(save)){
+    assign(paste0("tweets ", x), value = base, pos=1)
+    saveas <- " "
+  }else{
+  write.csv(base, paste0("tweets ", x,Sys.Date(),".csv"))
+  saveas <- "Se guardaron los tweets en la carpeta de trabajo"
+  assign(paste0("tweets ", x), value = base, pos=1)}
+  print(paste0("Se extrajeron ", cant, " tweets publicados por ", x," publicados desde el ", desde, " hasta el ", hasta, ". ", rt, " ", saveas))
+}
+
+
+#prueba de función 
+
+tw_extrae("retenciones", 5000, RT = T, save = T)
+tw_extrae("#YoNoSoyElCampo", 5000, RT = T, save = T)
+
+```
+
+# Paso 3: Limpieza y tokenización
+
+Con las funciones ya activas, es posible extraer información de cualquier tipo considerando las limitaciones de la API. Ya tenemos las bases en nuestro ambiente de trabajo disponibles para las tareas de limpieza de texto, para lo cual elaboraremos otra función.Tambien definiremos la lista de palabras inutiles para completar la limpieza
+
+```{r}
+
+palabras_inutiles <- c('rt', 't.co', 'https', 'tan', 'RT')
+
+#La función genera un objeto denominado 'texto limpio' que contiene las palabras de la base de tweets ingresada sin duplicados y unida con las valoraciones del sdal
+
+
+tw_limpieza <- function(texto){
+  base <- texto
+  base_token <- base %>% 
+    unnest_tokens(word, text) %>%
+    count(word, sort=TRUE) %>%
+    filter(!word%in%stopwords('es')) %>%
+    filter(!word%in%palabras_inutiles) %>%
+    filter(str_detect(word, "^[a-zA-z]|^#|^@"))%>%
+    arrange(desc(n))
+  base_token_sdal <- left_join(base_token, sdal) %>% 
+    filter(!is.na(media_agrado)) %>%
+    distinct(.$word, .keep_all = TRUE) %>% 
+    arrange(desc(n))
+  assign("texto limpio", base_token_sdal, pos=1)
+}
+
+#prueba de función
+
+tw_limpieza(`tweets retenciones`)
+
+
+
+```
+
+# Paso 4: Visualizaciones
+
+Luego de crear el objeto texto limpio, ya estamos en condiciones de visualizar aquellas palabras que más se repiten separando las mismas por su connotación positiva o negativa según la apreciación del SDAl.
+El primer paso consisten en armar un objeto con el texto nucleando palabras positivas y otro en sentido inverso
+
+```{r}
+#Palabras negativas
+textoneg <- `texto limpio` %>% 
+  arrange(media_agrado) %>% 
+  .[1:50,]
+
+#Palabras positivas
+textopos <- `texto limpio` %>% 
+  arrange(desc(media_agrado)) %>% 
+  .[1:50,]
+
+numerofilas <- as.numeric(nrow(textoneg))
+
+```
+
+
+Ahora podemos graficar los conjuntos de palabras generados. los mismos contienen `r nrow(textoneg)` términos tal cual se indicó como parámetro.
+
+
+```{r}
+textoneg%>%
+  .[1:20,] %>% 
+  mutate(word=fct_reorder(word, n)) %>% #creamos una nueva variable ordenada
+  ggplot(., aes(x=word, y=n))+
+  geom_segment(aes(x=word, xend=word, y=0, yend=n), color="grey")+
+  geom_point(size=3, color="darkred")+
+  coord_flip()+
+  theme(
+      panel.grid.minor.y = element_blank(),
+      panel.grid.major.y = element_blank(),
+      legend.position="none") +
+    xlab("") +
+    ylab("Frecuencia")+
+  labs(title= 'Opinión Pública en Twitter',
+       subtitle = 'Analizando hashtag retenciones: las 20 palabras más negativas por frecuencia',
+       caption = 'Fuente: Twitter')
+
+
+
+```
+
+Ahora vamos con las positivas
+
+```{r}
+textopos%>%
+  .[1:20,] %>% 
+  mutate(word=fct_reorder(word, n)) %>% #creamos una nueva variable ordenada
+  ggplot(., aes(x=word, y=n))+
+  geom_segment(aes(x=word, xend=word, y=0, yend=n), color="grey")+
+  geom_point(size=3, color="darkgreen")+
+  coord_flip()+
+  theme(
+      panel.grid.minor.y = element_blank(),
+      panel.grid.major.y = element_blank(),
+      legend.position="none") +
+    xlab("") +
+    ylab("Frecuencia")+
+  labs(title= 'Opinión Pública en Twitter',
+       subtitle = 'Analizando hashtag retenciones: las 20 palabras más positivas por frecuencia',
+       caption = 'Fuente: Twitter')
+
+```
+
+
+
