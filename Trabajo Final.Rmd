@@ -1,0 +1,1019 @@
+---
+title: "Trabajo Final - Curso Text Mining - Taller de Análisis y Minería de Texto (CPS)"
+author: "Ferchero Juan Guillermo"
+date: "16/12/2019"
+fontsize: 11pt
+fontfamily: bookman
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(error = TRUE)
+```
+
+## Analizando Tweets
+
+El objetivo de este artículo consiste en analizar las opiniones vertidas el día despues de las PASO 2019 acontecidas el dia 11 de agosto de 2019. Debido a la significativa victoria de la fórmula encabezada por Alberto Fernandez, el clima percibido cambió notoriamente en relación a lo que mostraban las encuestas los dias previos al comicio. De esta manera, resulta útil observar las reacciones en las redes sociales al calor de este resultado. 
+
+El esquema de trabajo consistirá en evaluar las reacciónes de los tweets que mencionan a los principales candidatos.
+
+# Paso 1: Librerias y activar sesión
+
+Comenzamos por limpiar los objetos de la memoria, levantar las librerias necesarias y autentificar nuestra sesión de Twitter
+
+```{r message=FALSE, warning=FALSE}
+#se borran todos los objetos de la memoria
+
+rm(list =ls())
+
+#Se configuran los directorios de trabajo
+
+
+setwd("C:/Users/Guille/Dropbox/R/Script/Analisis de Sentimiento")
+
+
+#Se instalan librerias de trabajo y se autentifica la sesión
+
+
+library(twitteR)
+library("tidyverse")
+library(tm)
+library(ggwordcloud)
+library(proustr)
+library(syuzhet)
+library(SnowballC)
+library(knitr)
+library(tidytext)
+library(highcharter)
+library(lubridate)
+library(scales)
+library("RVerbalExpressions")
+install.packages("topicmodels")
+library("topicmodels")
+
+
+#Levantamos una versión de SDAL 
+
+sdal <- read.csv('sdal.csv', encoding = 'UTF-8')
+
+#Autentificamos sesión de twitter
+
+source("twitter-auth.r")
+setup_twitter_oauth(consumer_key, consumer_secret, access_token, access_secret)
+```
+
+
+
+# Paso 2: Extraer Tweets
+
+
+El siguiente paso consiste en crear funciones para automatizar el proceso de "escrapeo". La primera función extrae tweets segun un hashtag o tópico, mientras que la segunda levanta el timeline de un usuario en particular. 
+
+```{r función extracción, echo=TRUE, message=FALSE, warning=FALSE}
+#Función para extraer tweets según tópico. Si el campo RT está vacio, no se incluyen retweets. La salida informa el rango temporal entre el primer tweet y el último.Si el campo save no está vacio, se genera un csv con la salida.
+
+tw_extrae <- function(x, maxcant, RT = NULL, save = NULL){
+  if(is.null(RT)){
+  tweets <- searchTwitter(paste0(x," exclude:retweets"), n=maxcant)
+  rt <- "No se incluyen retweets"
+  }
+  else{
+  tweets <- searchTwitter(paste0(x) , n=maxcant)
+  rt <- "Se incluyen retweets"
+  }
+  base <- twListToDF(tweets)
+  desde <- min(base[,5])
+  hasta <- max(base[,5])
+  cant <- nrow(base)
+  if(is.null(save)){
+    assign(paste0("tweets ", x), value = base, pos=1)
+    saveas <- " "
+  }else{
+  write.csv(base, paste0("tweets ", x,Sys.Date(),".csv"))
+  saveas <- "Se guardaron los tweets en la carpeta de trabajo"
+  assign(paste0("tweets ", x), value = base, pos=1)}
+  print(paste0("Se extrajeron ", cant, " tweets acerca de ", x," publicados desde el ", desde, " hasta el ", hasta, ". ", rt, " ", saveas))
+}
+
+
+
+#prueba de función
+
+tw_extrae('Alberto Fernandez', 5000)
+
+#Función para extraer timelines de usuarios. Si el campo RT está vacio, no se incluyen retweets. La salida informa el rango temporal entre el primer tweet y el último. Si el campo save no está vacio, se genera un csv con la salida.
+
+tw_timeline <- function(x, maxcant, RT = NULL, save = NULL){
+  if(is.null(RT)){
+  tweets <- userTimeline(paste0(x," exclude:retweets"), n=maxcant)
+  rt <- "No se incluyen retweets"
+  }
+  else{
+  tweets <- userTimeline(paste0(x) , n=maxcant)
+  rt <- "Se incluyen retweets"
+  }
+  base <- twListToDF(tweets)
+  desde <- min(base[,5])
+  hasta <- max(base[,5])
+  cant <- nrow(base)
+  if(is.null(save)){
+    assign(paste0("tweets ", x), value = base, pos=1)
+    saveas <- " "
+  }else{
+  write.csv(base, paste0("tweets ", x,Sys.Date(),".csv"))
+  saveas <- "Se guardaron los tweets en la carpeta de trabajo"
+  assign(paste0("tweets ", x), value = base, pos=1)}
+  print(paste0("Se extrajeron ", cant, " tweets publicados por ", x," publicados desde el ", desde, " hasta el ", hasta, ". ", rt, " ", saveas))
+}
+
+```
+
+Procedemos a levantar las bases que contienen los tweets de nuestro interés. Se guardan en objetos separados y se reunen manteniendo los originales.
+
+```{r levantabases, message=FALSE, warning=FALSE}
+#Levantamos las bases
+
+TweetsAF <- read.csv(file = "tweetsDFAFernandez2019-08-09.csv")
+TweetsAF2 <- read.csv(file = "tweetsDFAFernandez2019-08-11.csv")
+TweetsAF3 <- read.csv(file = "tweetsDFAFernandez2019-08-12.csv")
+
+TweetsAlbertoFernandez <- rbind(TweetsAF,TweetsAF2, TweetsAF3)
+TweetsAlbertoFernandez <-  TweetsAlbertoFernandez %>% 
+  mutate(Candidato = "Alberto Fernandez")
+
+TweetsCFK <- read.csv(file = "tweetsDFCFK2019-08-09.csv")
+TweetsCFK2 <- read.csv(file = "tweetsDFCFK2019-08-11.csv")
+TweetsCFK3 <- read.csv(file = "tweetsDFCFK2019-08-12.csv")
+
+TweetsCristinaFernandez <- rbind(TweetsCFK,TweetsCFK2, TweetsCFK3)
+TweetsCristinaFernandez <- TweetsCristinaFernandez %>% 
+  mutate(Candidato = "Cristina Fernandez")
+
+
+TweetsMACRI <- read.csv(file = "tweetsDFMACRI2019-08-09.csv")
+TweetsMACRI2 <- read.csv(file = "tweetsDFMACRI2019-08-11.csv")
+TweetsMACRI3 <- read.csv(file = "tweetsDFMACRI2019-08-12.csv")
+
+TweetsMauricioMacri <- rbind(TweetsMACRI,TweetsMACRI2, TweetsMACRI3)
+TweetsMauricioMacri <- TweetsMauricioMacri %>% 
+  mutate(Candidato = "Mauricio Macri")
+
+Tweetspichetto <- read.csv(file = "tweetsDFpichetto2019-08-09.csv")
+Tweetspichetto2 <- read.csv(file = "tweetsDFpichetto2019-08-11.csv")
+Tweetspichetto3 <- read.csv(file = "tweetsDFpichetto2019-08-12.csv")
+
+TweetsMigelAPichetto <- rbind(Tweetspichetto,Tweetspichetto2, Tweetspichetto3)
+TweetsMigelAPichetto <-TweetsMigelAPichetto %>% 
+  mutate(Candidato = "Miguel Pichetto")
+
+
+
+BaseTweets <- rbind(TweetsAlbertoFernandez,TweetsCristinaFernandez,TweetsMauricioMacri,TweetsMigelAPichetto)
+
+BaseTweets$fecha <- ymd_hms(BaseTweets$created)
+BaseTweets$text <- as.character(BaseTweets$text)
+
+```
+
+Tal cual se observa, nuestra base tiene `r nrow(BaseTweets)` tweets, 15.000 por candidato. A continuación desarrollaremos un breve análisis descriptivo de nuestra base.
+
+# Paso 3: Análisis descriptivo
+
+```{r}
+#Se solicita la ventana de observación de los tweets
+
+desde <- min(BaseTweets$fecha)
+hasta <- max(BaseTweets$fecha)
+print(paste0(" tweets publicados desde el ", desde, " hasta el ", hasta))
+            
+#Se elabora un gráfico para visualizar la cantidad de mensajes por candidato
+             
+BaseTweets %>% 
+  select(Candidato, fecha) %>%
+  mutate(dia = day(fecha)) %>%
+  group_by(Candidato,dia) %>%
+  arrange(dia) %>%
+  summarise(total = n()) %>% 
+  ggplot(aes(x=dia,y=total,col=Candidato,group = 1))+
+  geom_point()+
+  ggtitle("Cantidad de tweets por día según candidato")+
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_x_discrete(limits = c(6:12))
+
+#VERSION HIGHCHART
+# Grafico1 <- hchart(Tabla1, "line", hcaes(x = Día, y = total, group = Candidato,)) 
+# 
+# Grafico1
+
+```
+
+Mas allá de que la extracción de tweets intentó mantener criterios de proporcionalidad para todos los candidatos, es evidente que pueden existir momentos en donde la cantidad de mensajes de un candidato varie en desmedro de otro. En la selección de tweets es posible apreciar que los dias clave de la elección fueron capitalizados por la figura de Mauricio Macri y Cristina Fernandez. 
+Veamos, a continuación, si es posible apreciar algun comportamiento en relación al dispositivo en el cual fueron emitidos los tweets. 
+
+```{r}
+Tabla2 <- BaseTweets %>%
+  select(id, statusSource, text, created, fecha, Candidato) %>%
+  extract(statusSource, "source", "Twitter for (.*?)<") %>%
+  filter(source %in% c("iPhone", "Android"))
+
+Tabla2.1 <- Tabla2 %>% 
+  select(source, fecha) %>% 
+  mutate(dia = day(fecha)) %>%
+  group_by(source, dia) %>% 
+  summarise(total =n())
+  
+
+Tabla2.1 %>%
+  ggplot(aes(dia, total, color = source)) +
+  geom_line() + geom_point()+
+  ggtitle("Cantidad de tweets por día según dispositivo")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(x = "Día",
+       y = "% de tweets",
+       color = "")+
+  scale_x_discrete(limits = c(6:12))
+
+#VERSION HIGHCHART
+# Grafico2 <- hchart(Tabla2.1, "line", hcaes(x = dia, y = total, group = source,)) 
+# 
+# Grafico2
+
+```
+
+A los fines de esta descripción, se seleccionan sólo los mensajes emitidos desde un Iphone o algun dispositivo Android, lo cual reduce nuestra base de 60.000 mensajes a 37.517. Se puede apreciar que la mayor parte de los mensajes fueron emitidos desde dispositivos Android. Veamos ahora, como se comportó esta clasificación según los candidatos.
+
+```{r}
+
+Tabla2.2 <- Tabla2 %>% 
+  select(source, Candidato) %>% 
+  group_by(Candidato,source) %>% 
+  summarise(total = n())
+
+ggplot(Tabla2.2, aes(x = source,y = total, fill = source)) + 
+    geom_bar(stat = "identity") + 
+    facet_grid(. ~ Candidato) + 
+    ylab("Total de mensajes") + 
+    scale_fill_manual("Dispositivo", values = alpha(c("coral", "lightblue"), 1)) 
+
+
+```
+
+
+Tal cual se observa en los mensajes recogidos, Android es el dispositivo mas utilizado en relación a Iphone. La candiadta que mas mensajes obtiene mediante el uso del celular de Mac es Cristina Fernandez, seguida de Mauricio Macri. 
+
+# Paso 4: Análisis de sentimiento
+
+Dado el objetivo de analizar las palabras propiamente dichas, se procederá a limpiar los tweets de modo tal que sea posible medir el sentimiento de las palabras utilizadas para cada candidato.
+
+```{r}
+#Alberto
+
+palabras_inutiles <- c('rt', 't.co', 'https', 'tan', 'Alberto', 'Fernandez', 'alberto', 'fernandez', 'fernández')
+
+BaseAlberto <- BaseTweets %>% 
+  filter(Candidato == "Alberto Fernandez") %>% 
+  unnest_tokens(Palabra, text) %>%
+    count(Palabra, sort=TRUE) %>%
+    filter(!Palabra%in%stopwords('es')) %>%
+    filter(!Palabra%in%palabras_inutiles) %>%
+    filter(str_detect(Palabra, "^[a-zA-z]|^#|^@"))%>%
+    arrange(desc(n)) %>% 
+    rename('word'=Palabra)
+
+BaseAlbertoSDAL <- left_join(BaseAlberto, sdal)
+
+TweetsAlbertoNeg <- BaseAlbertoSDAL %>% 
+  filter(!is.na(media_agrado)) %>%
+  arrange(media_agrado, desc(n))
+
+TweetsAlbertoPos <- BaseAlbertoSDAL %>% 
+  filter(!is.na(media_agrado)) %>%
+  arrange(desc(media_agrado), desc(n))
+
+TokenAlbertoNeg <- TweetsAlbertoNeg %>% 
+  head(50)
+
+TokenAlbertoPos <- TweetsAlbertoPos %>% 
+  head(50)
+
+
+```
+
+Podemos ver que el volumen de palabras disminuyó considerablemente y, luego de todos los procesos y filtros contamos con 4063 palabras para trabajar de las cuales tomamos las 50 con mayor o menor valoración y mayor cantidad para construir los token negativos y positivos. El paso siguiente consiste en agrupar manualmente los sinónimos para conservar los 20 términos que utilizaremos para trabajar y, finalmente graficar.
+
+```{r}
+#Limpiamos los token negativos
+TokenAlbertoNeg <- TokenAlbertoNeg %>% 
+  mutate(n=case_when(word=='pierde'~79,
+                     TRUE~as.numeric(n))) %>% 
+  filter(!word%in%c('perdiendo', 'pierden', 'perder', 'perdido', 'perdió', 'perdería', 'pierdas', 'perdiste', 'perdieron')) %>% 
+  mutate(n=case_when(word=='robó'~79,
+                     TRUE~as.numeric(n))) %>% 
+  filter(!word%in%c('robaron')) %>% 
+  distinct(.$word, .keep_all = TRUE)
+
+#Limpiamos los token positivos
+TokenAlbertoPos <- TokenAlbertoPos %>% 
+  mutate(n=case_when(word=='quiero'~369,
+                     TRUE~as.numeric(n))) %>% 
+  filter(!word%in%c('queremos', 'quieren', 'quiere')) %>% 
+  distinct(.$word, .keep_all = TRUE)
+
+#Graficamos 
+TokenAlbertoPos %>% #partimos de la base
+  head(20) %>% #tomamos los primeros 20 casos
+  mutate(word2=fct_reorder(word, n)) %>% #creamos una nueva variable ordenada
+  ggplot(., aes(x=word, y=n))+ #indicamos la base y los ejes
+  geom_segment(aes(x=word2, xend=word2, y=0, yend=n), color="grey")+ #esta es la primera capa: el segmento
+  geom_point(size=3, color="darkgreen")+ #segunda capa: el punto
+  coord_flip()+ #damos vuelta los ejes
+  theme(
+      panel.grid.minor.y = element_blank(), #detalles estéticos
+      panel.grid.major.y = element_blank(),
+      legend.position="none") +
+    xlab("") +
+    ylab("Frecuencia")+
+  labs(title='Mensajes acerca de Alberto Fernandez: las 20 palabras más positivas por frecuencia',
+       subtitle = 'Trabajo Final taller de Análisis de texto en el CPS',
+       caption = 'Fuente: Twitter')
+
+TokenAlbertoNeg %>% #partimos de la base
+  head(20) %>% #tomamos los primeros 20 casos
+  mutate(word2=fct_reorder(word, n)) %>% #creamos una nueva variable ordenada
+  ggplot(., aes(x=word, y=n))+ #indicamos la base y los ejes
+  geom_segment(aes(x=word2, xend=word2, y=0, yend=n), color="grey")+ #esta es la primera capa: el segmento
+  geom_point(size=3, color="darkred")+ #segunda capa: el punto
+  coord_flip()+ #damos vuelta los ejes
+  theme(
+      panel.grid.minor.y = element_blank(), #detalles estéticos
+      panel.grid.major.y = element_blank(),
+      legend.position="none") +
+    xlab("") +
+    ylab("Frecuencia")+
+  labs(title='Mensajes acerca de Alberto Fernandez: las 20 palabras más negativas por frecuencia',
+       subtitle = 'Trabajo Final taller de Análisis de texto en el CPS',
+       caption = 'Fuente: Twitter')
+
+
+```
+
+Las palabras vinculadas a "robar", "odio" o "venganza encabezan los terminos negativos, mientras que "apoyo", "bien" y "victoria" son las que tienen mayor valoración. Veamos que ocurre con los restantes candidatos.
+
+```{r}
+#Cristina
+
+palabras_inutiles <- c('rt', 't.co', 'https', 'tan', 'Cristina', 'Fernandez', 'cristina', 'fernandez', 'fernández')
+
+BaseCristina <- BaseTweets %>% 
+  filter(Candidato == "Cristina Fernandez") %>% 
+  unnest_tokens(Palabra, text) %>%
+    count(Palabra, sort=TRUE) %>%
+    filter(!Palabra%in%stopwords('es')) %>%
+    filter(!Palabra%in%palabras_inutiles) %>%
+    filter(str_detect(Palabra, "^[a-zA-z]|^#|^@"))%>%
+    arrange(desc(n)) %>% 
+    rename('word'=Palabra)
+
+BaseCristinaSDAL <- left_join(BaseCristina, sdal)
+
+TweetsCristinaNeg <- BaseCristinaSDAL %>% 
+  filter(!is.na(media_agrado)) %>%
+  arrange(media_agrado, desc(n))
+
+TweetsCristinaPos <- BaseCristinaSDAL %>% 
+  filter(!is.na(media_agrado)) %>%
+  arrange(desc(media_agrado), desc(n))
+
+TokenCristinaNeg <- TweetsCristinaNeg %>% 
+  head(50)
+
+TokenCristinaPos <- TweetsCristinaPos %>% 
+  head(50)
+```
+
+```{r}
+#Limpiamos los token negativos
+TokenCristinaNeg <- TokenCristinaNeg %>% 
+  mutate(n=case_when(word=='pierde'~104,
+                     TRUE~as.numeric(n))) %>% 
+  filter(!word%in%c('perdiendo', 'pierden', 'perder', 'perdido', 'perdió', 'perdería', 'pierdas', 'perdiste', 'perdieron')) %>% 
+  mutate(n=case_when(word=='robó'~176,
+                     TRUE~as.numeric(n))) %>% 
+  filter(!word%in%c('robaron')) %>% 
+  distinct(.$word, .keep_all = TRUE)
+
+#Limpiamos los token positivos
+TokenCristinaPos <- TokenCristinaPos %>% 
+  mutate(n=case_when(word=='quiero'~408,
+                     TRUE~as.numeric(n))) %>% 
+  filter(!word%in%c('queremos', 'quieren', 'quiere')) %>% 
+  distinct(.$word, .keep_all = TRUE)
+
+#Graficamos 
+TokenCristinaPos %>% #partimos de la base
+  head(20) %>% #tomamos los primeros 20 casos
+  mutate(word2=fct_reorder(word, n)) %>% #creamos una nueva variable ordenada
+  ggplot(., aes(x=word, y=n))+ #indicamos la base y los ejes
+  geom_segment(aes(x=word2, xend=word2, y=0, yend=n), color="grey")+ #esta es la primera capa: el segmento
+  geom_point(size=3, color="darkgreen")+ #segunda capa: el punto
+  coord_flip()+ #damos vuelta los ejes
+  theme(
+      panel.grid.minor.y = element_blank(), #detalles estéticos
+      panel.grid.major.y = element_blank(),
+      legend.position="none") +
+    xlab("") +
+    ylab("Frecuencia")+
+  labs(title='Mensajes acerca de Cristina Fernandez: las 20 palabras más positivas por frecuencia',
+       subtitle = 'Trabajo Final taller de Análisis de texto en el CPS',
+       caption = 'Fuente: Twitter')
+
+TokenCristinaNeg %>% #partimos de la base
+  head(20) %>% #tomamos los primeros 20 casos
+  mutate(word2=fct_reorder(word, n)) %>% #creamos una nueva variable ordenada
+  ggplot(., aes(x=word, y=n))+ #indicamos la base y los ejes
+  geom_segment(aes(x=word2, xend=word2, y=0, yend=n), color="grey")+ #esta es la primera capa: el segmento
+  geom_point(size=3, color="darkred")+ #segunda capa: el punto
+  coord_flip()+ #damos vuelta los ejes
+  theme(
+      panel.grid.minor.y = element_blank(), #detalles estéticos
+      panel.grid.major.y = element_blank(),
+      legend.position="none") +
+    xlab("") +
+    ylab("Frecuencia")+
+  labs(title='Mensajes acerca de Cristina Fernandez: las 20 palabras más negativas por frecuencia',
+       subtitle = 'Trabajo Final taller de Análisis de texto en el CPS',
+       caption = 'Fuente: Twitter')
+
+```
+
+Se aprecia que en el caso de la ex presidenta, los términos relacionados a "robar" adquieren mayor protagonismo.
+
+
+```{r}
+#Macri
+
+palabras_inutiles <- c('rt', 't.co', 'https', 'tan', 'Mauricio', 'Macri')
+
+BaseMacri <- BaseTweets %>% 
+  filter(Candidato == "Mauricio Macri") %>% 
+  unnest_tokens(Palabra, text) %>%
+    count(Palabra, sort=TRUE) %>%
+    filter(!Palabra%in%stopwords('es')) %>%
+    filter(!Palabra%in%palabras_inutiles) %>%
+    filter(str_detect(Palabra, "^[a-zA-z]|^#|^@"))%>%
+    arrange(desc(n)) %>% 
+    rename('word'=Palabra)
+
+BaseMacriSDAL <- left_join(BaseMacri, sdal)
+
+TweetsMacriNeg <- BaseMacriSDAL %>% 
+  filter(!is.na(media_agrado)) %>%
+  arrange(media_agrado, desc(n))
+
+TweetsMacriPos <- BaseMacriSDAL %>% 
+  filter(!is.na(media_agrado)) %>%
+  arrange(desc(media_agrado), desc(n))
+
+TokenMacriNeg <- TweetsMacriNeg %>% 
+  head(50)
+
+TokenMacriPos <- TweetsMacriPos %>% 
+  head(50)
+```
+```{r}
+#Limpiamos los token negativos
+TokenMacriNeg <- TokenMacriNeg %>% 
+  mutate(n=case_when(word=='pierde'~280,
+                     TRUE~as.numeric(n))) %>% 
+  filter(!word%in%c('perdiendo', 'pierden', 'perder', 'perdido', 'perdió', 'perdería', 'pierdas', 'perdiste', 'perdieron')) %>% 
+  mutate(n=case_when(word=='robar'~70,
+                     TRUE~as.numeric(n))) %>% 
+  filter(!word%in%c('robaron', 'robó', 'robo')) %>% 
+  distinct(.$word, .keep_all = TRUE)
+
+#Limpiamos los token positivos
+TokenMacriPos <- TokenMacriPos %>% 
+  mutate(n=case_when(word=='quiero'~408,
+                     TRUE~as.numeric(n))) %>% 
+  filter(!word%in%c('queremos', 'quieren', 'quiere')) %>% 
+  distinct(.$word, .keep_all = TRUE)
+
+#Graficamos 
+TokenMacriPos %>% #partimos de la base
+  head(20) %>% #tomamos los primeros 20 casos
+  mutate(word2=fct_reorder(word, n)) %>% #creamos una nueva variable ordenada
+  ggplot(., aes(x=word, y=n))+ #indicamos la base y los ejes
+  geom_segment(aes(x=word2, xend=word2, y=0, yend=n), color="grey")+ #esta es la primera capa: el segmento
+  geom_point(size=3, color="darkgreen")+ #segunda capa: el punto
+  coord_flip()+ #damos vuelta los ejes
+  theme(
+      panel.grid.minor.y = element_blank(), #detalles estéticos
+      panel.grid.major.y = element_blank(),
+      legend.position="none") +
+    xlab("") +
+    ylab("Frecuencia")+
+  labs(title='Mensajes acerca de Mauricio Macri: las 20 palabras más positivas por frecuencia',
+       subtitle = 'Trabajo Final taller de Análisis de texto en el CPS',
+       caption = 'Fuente: Twitter')
+
+TokenMacriNeg %>% #partimos de la base
+  head(20) %>% #tomamos los primeros 20 casos
+  mutate(word2=fct_reorder(word, n)) %>% #creamos una nueva variable ordenada
+  ggplot(., aes(x=word, y=n))+ #indicamos la base y los ejes
+  geom_segment(aes(x=word2, xend=word2, y=0, yend=n), color="grey")+ #esta es la primera capa: el segmento
+  geom_point(size=3, color="darkred")+ #segunda capa: el punto
+  coord_flip()+ #damos vuelta los ejes
+  theme(
+      panel.grid.minor.y = element_blank(), #detalles estéticos
+      panel.grid.major.y = element_blank(),
+      legend.position="none") +
+    xlab("") +
+    ylab("Frecuencia")+
+  labs(title='Mensajes acerca de Mauricio Macri: las 20 palabras más negativas por frecuencia',
+       subtitle = 'Trabajo Final taller de Análisis de texto en el CPS',
+       caption = 'Fuente: Twitter')
+
+```
+
+Palabras como "bien", "familia" y "democracia" son las que aparecen en los tópicos de Macri en sintonía con el discurso de sus votantes. En las palabras negativas, "hambre" supera por varios tópicos a "robar", lo cual marca la pauta del perfil que tiene la opinión pública acerca de Macri en relación a sus contrincantes. 
+
+
+
+```{r}
+#Pichetto
+
+palabras_inutiles <- c('rt', 't.co', 'https', 'tan', 'Miguel', 'Pichetto')
+
+BasePichetto <- BaseTweets %>% 
+  filter(Candidato == "Miguel Pichetto") %>% 
+  unnest_tokens(Palabra, text) %>%
+    count(Palabra, sort=TRUE) %>%
+    filter(!Palabra%in%stopwords('es')) %>%
+    filter(!Palabra%in%palabras_inutiles) %>%
+    filter(str_detect(Palabra, "^[a-zA-z]|^#|^@"))%>%
+    arrange(desc(n)) %>% 
+    rename('word'=Palabra)
+
+BasePichettoSDAL <- left_join(BasePichetto, sdal)
+
+TweetsPichettoNeg <- BasePichettoSDAL %>% 
+  filter(!is.na(media_agrado)) %>%
+  arrange(media_agrado, desc(n))
+
+TweetsPichettoPos <- BasePichettoSDAL %>% 
+  filter(!is.na(media_agrado)) %>%
+  arrange(desc(media_agrado), desc(n))
+
+TokenPichettoNeg <- TweetsPichettoNeg %>% 
+  head(50)
+
+TokenPichettoPos <- TweetsPichettoPos %>% 
+  head(50)
+```
+
+
+```{r}
+#Limpiamos los token negativos
+TokenPichettoNeg <- TokenPichettoNeg %>% 
+  mutate(n=case_when(word=='pierde'~280,
+                     TRUE~as.numeric(n))) %>% 
+  filter(!word%in%c('perdiendo', 'pierden', 'perder', 'perdido', 'perdió', 'perdería', 'pierdas', 'perdiste', 'perdieron')) %>% 
+  mutate(n=case_when(word=='robar'~70,
+                     TRUE~as.numeric(n))) %>% 
+  filter(!word%in%c('robaron', 'robó', 'robo')) %>% 
+  distinct(.$word, .keep_all = TRUE)
+
+#Limpiamos los token positivos
+TokenPichettoPos <- TokenPichettoPos %>% 
+  mutate(n=case_when(word=='quiero'~408,
+                     TRUE~as.numeric(n))) %>% 
+  filter(!word%in%c('queremos', 'quieren', 'quiere')) %>% 
+  distinct(.$word, .keep_all = TRUE)
+
+#Graficamos 
+TokenPichettoPos %>% #partimos de la base
+  head(20) %>% #tomamos los primeros 20 casos
+  mutate(word2=fct_reorder(word, n)) %>% #creamos una nueva variable ordenada
+  ggplot(., aes(x=word, y=n))+ #indicamos la base y los ejes
+  geom_segment(aes(x=word2, xend=word2, y=0, yend=n), color="grey")+ #esta es la primera capa: el segmento
+  geom_point(size=3, color="darkgreen")+ #segunda capa: el punto
+  coord_flip()+ #damos vuelta los ejes
+  theme(
+      panel.grid.minor.y = element_blank(), #detalles estéticos
+      panel.grid.major.y = element_blank(),
+      legend.position="none") +
+    xlab("") +
+    ylab("Frecuencia")+
+  labs(title='Mensajes acerca de Miguel Pichetto: las 20 palabras más positivas por frecuencia',
+       subtitle = 'Trabajo Final taller de Análisis de texto en el CPS',
+       caption = 'Fuente: Twitter')
+
+TokenPichettoNeg %>% #partimos de la base
+  head(20) %>% #tomamos los primeros 20 casos
+  mutate(word2=fct_reorder(word, n)) %>% #creamos una nueva variable ordenada
+  ggplot(., aes(x=word, y=n))+ #indicamos la base y los ejes
+  geom_segment(aes(x=word2, xend=word2, y=0, yend=n), color="grey")+ #esta es la primera capa: el segmento
+  geom_point(size=3, color="darkred")+ #segunda capa: el punto
+  coord_flip()+ #damos vuelta los ejes
+  theme(
+      panel.grid.minor.y = element_blank(), #detalles estéticos
+      panel.grid.major.y = element_blank(),
+      legend.position="none") +
+    xlab("") +
+    ylab("Frecuencia")+
+  labs(title='Mensajes acerca de Miguel Pichetto: las 20 palabras más negativas por frecuencia',
+       subtitle = 'Trabajo Final taller de Análisis de texto en el CPS',
+       caption = 'Fuente: Twitter')
+
+```
+
+De los mensajes vinculados con el candidato a vicepresidente por el oficialismo aparecen de manera notable los términos "bien", "amigo" y "apoyo" en contraste con los vinculados con "culpa, "miedo" y "matar". No aparece las palabras relacionadas con "robar" como si figuraban en los restantes candidatos. 
+Veamos de manera gráfica las nubes de palabras
+
+```{r message=FALSE, warning=FALSE}
+BaseAlbertoSDAL %>% 
+  filter(!is.na(media_agrado)) %>%
+  distinct(.$word, .keep_all = TRUE) %>% 
+  mutate(angle = 45 * sample(-2:2, n(), replace = TRUE, prob = c(1, 1, 4, 1, 1))) %>% #variable nueva
+  ggplot(., aes(label=word, size=n, color = media_agrado, angle = angle))+ #cuatro parámetros!
+  geom_text_wordcloud_area(rm_outside = TRUE)+ #una de las dos formas de usar la librería
+  scale_color_gradient(low="#c90000", high="#009A44")+ #escalas de color
+  scale_size_area(max_size = 20)+ #tamaños máximos
+  theme_minimal()+ #forma minimalista
+  labs(title='Wordcloud: Elecciones Alberto Fernandez',
+       subtitle='Trabajo Final Taller de Análisis de Texto del CPS',
+       caption='Fuente: Twitter')
+```
+
+
+```{r message=FALSE, warning=FALSE}
+
+BaseCristinaSDAL %>% 
+  filter(!is.na(media_agrado)) %>% 
+  distinct(.$word, .keep_all = TRUE) %>% 
+  mutate(angle = 45 * sample(-2:2, n(), replace = TRUE, prob = c(1, 1, 4, 1, 1))) %>% #variable nueva
+  ggplot(., aes(label=word, size=n, color = media_agrado, angle = angle))+ #cuatro parámetros!
+  geom_text_wordcloud_area(rm_outside = TRUE)+ #una de las dos formas de usar la librería
+  scale_color_gradient(low="#c90000", high="#009A44")+ #escalas de color
+  scale_size_area(max_size = 20)+ #tamaños máximos
+  theme_minimal()+ #forma minimalista
+  labs(title='Wordcloud: Elecciones Cristina Fernandez',
+       subtitle='Trabajo Final Taller de Análisis de Texto del CPS',
+       caption='Fuente: Twitter')
+
+
+```
+
+
+```{r message=FALSE, warning=FALSE}
+
+BaseMacriSDAL %>% 
+  filter(!is.na(media_agrado)) %>% 
+  distinct(.$word, .keep_all = TRUE) %>% 
+  mutate(angle = 45 * sample(-2:2, n(), replace = TRUE, prob = c(1, 1, 4, 1, 1))) %>% #variable nueva
+  ggplot(., aes(label=word, size=n, color = media_agrado, angle = angle))+ #cuatro parámetros!
+  geom_text_wordcloud_area(rm_outside = TRUE)+ #una de las dos formas de usar la librería
+  scale_color_gradient(low="#c90000", high="#009A44")+ #escalas de color
+  scale_size_area(max_size = 20)+ #tamaños máximos
+  theme_minimal()+ #forma minimalista
+  labs(title='Wordcloud: Elecciones Mauricio Macri',
+       subtitle='Trabajo Final Taller de Análisis de Texto del CPS',
+       caption='Fuente: Twitter')
+```
+
+```{r message=FALSE, warning=FALSE}
+BasePichettoSDAL %>% 
+  filter(!is.na(media_agrado)) %>% 
+  distinct(.$word, .keep_all = TRUE) %>% 
+  mutate(angle = 45 * sample(-2:2, n(), replace = TRUE, prob = c(1, 1, 4, 1, 1))) %>% #variable nueva
+  ggplot(., aes(label=word, size=n, color = media_agrado, angle = angle))+ #cuatro parámetros!
+  geom_text_wordcloud_area(rm_outside = TRUE)+ #una de las dos formas de usar la librería
+  scale_color_gradient(low="#c90000", high="#009A44")+ #escalas de color
+  scale_size_area(max_size = 20)+ #tamaños máximos
+  theme_minimal()+ #forma minimalista
+  labs(title='Wordcloud: Elecciones Miguel Pichetto',
+       subtitle='Trabajo Final Taller de Análisis de Texto del CPS',
+       caption='Fuente: Twitter')
+```
+
+
+Ya pudimos apreciar las ventajas y algunas potencialidades de trabajar texto con SDAL. Ahora veamos que permite el trabajo con NRC. 
+
+```{r}
+
+#Limpieza y creación de vector
+BaseAlbertoNRC <- gsub("http.*","",TweetsAlbertoFernandez$text)
+BaseAlbertoNRC <- gsub("https.*","",TweetsAlbertoFernandez$text)
+BaseAlbertoNRC <- gsub("#\\w+","",TweetsAlbertoFernandez$text)
+BaseAlbertoNRC <- gsub("@\\w+","",TweetsAlbertoFernandez$text)
+BaseAlbertoNRC <- gsub("[[:punct:]]","",TweetsAlbertoFernandez$text)
+BaseAlbertoNRC <- gsub("\\w*[0-9]+\\w*\\s*", "",TweetsAlbertoFernandez$text)
+BaseAlbertoNRC <- gsub("rt ", "", TweetsAlbertoFernandez$text)
+BaseAlbertoNRC <- gsub("RT ", "", TweetsAlbertoFernandez$text)
+BaseAlbertoNRC <- gsub("\n", "", TweetsAlbertoFernandez$text)
+
+#carga de diccionario NRC
+Albertonrc_data <- get_nrc_sentiment(char_v = BaseAlbertoNRC, language = 'spanish')
+
+Albertonrc_data <- Albertonrc_data %>% 
+  rename('anticipación'=anticipation,
+           'ira'=anger,
+           'disgusto'=disgust,
+           'miedo'=fear,
+           'alegría'=joy,
+           'tristeza'=sadness,
+           'sorpresa'=surprise,
+           'confianza'=trust,
+           'negativa'=negative,
+           'positiva'=positive)
+
+#Manipulación de data
+base_emocionAlberto <- data.frame(t(Albertonrc_data))
+base_emocionAlberto <- data.frame(rowSums(base_emocionAlberto))
+names(base_emocionAlberto)[1] <- "cuenta"
+base_emocionAlberto <- cbind('sentimiento'=rownames(base_emocionAlberto), base_emocionAlberto)
+rownames(base_emocionAlberto) <- NULL
+
+#Graficamos
+ggplot(base_emocionAlberto[1:8,], aes(x = sentimiento, y = round(cuenta/sum(cuenta)*100, 1), fill = sentimiento)) + 
+  geom_bar(stat = "identity") +
+  labs(title='Elecciones Alberto Fernandez - Sentiment Analysis (NRC)',
+       subtitle = 'Trabajo Final Taller de Análisis de Texto del CPS',
+       caption='Fuente: Twitter',
+       x = "Sentimiento", 
+       y = "Frecuencia") +
+  geom_text(aes(label = paste(round(cuenta/sum(cuenta)*100, 1), '%')),
+            vjust = 1.5, color = "black",
+            size = 4)
+
+
+
+```
+
+Tal cual se aprecia, la confianza aparece como el item mayoritario en los mensajes referidos al actual Presidente de la Nación.
+
+```{r}
+
+#Limpieza y creación de vector
+BaseCristinaNRC <- gsub("http.*","",TweetsCristinaFernandez$text)
+BaseCristinaNRC <- gsub("https.*","",TweetsCristinaFernandez$text)
+BaseCristinaNRC <- gsub("#\\w+","",TweetsCristinaFernandez$text)
+BaseCristinaNRC <- gsub("@\\w+","",TweetsCristinaFernandez$text)
+BaseCristinaNRC <- gsub("[[:punct:]]","",TweetsCristinaFernandez$text)
+BaseCristinaNRC <- gsub("\\w*[0-9]+\\w*\\s*", "",TweetsCristinaFernandez$text)
+BaseCristinaNRC <- gsub("rt ", "", TweetsCristinaFernandez$text)
+BaseCristinaNRC <- gsub("RT ", "", TweetsCristinaFernandez$text)
+BaseCristinaNRC <- gsub("\n", "", TweetsCristinaFernandez$text)
+
+#carga de diccionario NRC
+Cristinanrc_data <- get_nrc_sentiment(char_v = BaseCristinaNRC, language = 'spanish')
+
+Cristinanrc_data <- Cristinanrc_data %>% 
+  rename('anticipación'=anticipation,
+           'ira'=anger,
+           'disgusto'=disgust,
+           'miedo'=fear,
+           'alegría'=joy,
+           'tristeza'=sadness,
+           'sorpresa'=surprise,
+           'confianza'=trust,
+           'negativa'=negative,
+           'positiva'=positive)
+
+#Manipulación de data
+base_emocionCristina <- data.frame(t(Cristinanrc_data))
+base_emocionCristina <- data.frame(rowSums(base_emocionCristina))
+names(base_emocionCristina)[1] <- "cuenta"
+base_emocionCristina <- cbind('sentimiento'=rownames(base_emocionCristina), base_emocionCristina)
+rownames(base_emocionCristina) <- NULL
+
+#Graficamos
+ggplot(base_emocionCristina[1:8,], aes(x = sentimiento, y = round(cuenta/sum(cuenta)*100, 1), fill = sentimiento)) + 
+  geom_bar(stat = "identity") +
+  labs(title='Elecciones Cristina Fernandez - Sentiment Analysis (NRC)',
+       subtitle = 'Trabajo Final Taller de Análisis de Texto del CPS',
+       caption='Fuente: Twitter',
+       x = "Sentimiento", 
+       y = "Frecuencia") +
+  geom_text(aes(label = paste(round(cuenta/sum(cuenta)*100, 1), '%')),
+            vjust = 1.5, color = "black",
+            size = 4)
+
+
+
+```
+
+Si bien los valores correspondientes a Cristina muestran un alto porcentaje de confianza, tambien permiten apreciar una mayor cautela y angustia, sentimiento que coinciden con algunas mediciones negativas de la imagen de la ex presidenta.
+
+```{r}
+
+#Limpieza y creación de vector
+BaseMacriNRC <- gsub("http.*","",TweetsMauricioMacri$text)
+BaseMacriNRC <- gsub("https.*","",TweetsMauricioMacri$text)
+BaseMacriNRC <- gsub("#\\w+","",TweetsMauricioMacri$text)
+BaseMacriNRC <- gsub("@\\w+","",TweetsMauricioMacri$text)
+BaseMacriNRC <- gsub("[[:punct:]]","",TweetsMauricioMacri$text)
+BaseMacriNRC <- gsub("\\w*[0-9]+\\w*\\s*", "",TweetsMauricioMacri$text)
+BaseMacriNRC <- gsub("rt ", "", TweetsMauricioMacri$text)
+BaseMacriNRC <- gsub("RT ", "", TweetsMauricioMacri$text)
+BaseMacriNRC <- gsub("\n", "", TweetsMauricioMacri$text)
+
+#carga de diccionario NRC
+Macrinrc_data <- get_nrc_sentiment(char_v = BaseMacriNRC, language = 'spanish')
+
+Macrinrc_data <- Macrinrc_data %>% 
+  rename('anticipación'=anticipation,
+           'ira'=anger,
+           'disgusto'=disgust,
+           'miedo'=fear,
+           'alegría'=joy,
+           'tristeza'=sadness,
+           'sorpresa'=surprise,
+           'confianza'=trust,
+           'negativa'=negative,
+           'positiva'=positive)
+
+#Manipulación de data
+base_emocionMacri <- data.frame(t(Macrinrc_data))
+base_emocionMacri <- data.frame(rowSums(base_emocionMacri))
+names(base_emocionMacri)[1] <- "cuenta"
+base_emocionMacri <- cbind('sentimiento'=rownames(base_emocionMacri), base_emocionMacri)
+rownames(base_emocionMacri) <- NULL
+
+#Graficamos
+ggplot(base_emocionMacri[1:8,], aes(x = sentimiento, y = round(cuenta/sum(cuenta)*100, 1), fill = sentimiento)) + 
+  geom_bar(stat = "identity") +
+  labs(title='Elecciones Mauricio Macri - Sentiment Analysis (NRC)',
+       subtitle = 'Trabajo Final Taller de Análisis de Texto del CPS',
+       caption='Fuente: Twitter',
+       x = "Sentimiento", 
+       y = "Frecuencia") +
+  geom_text(aes(label = paste(round(cuenta/sum(cuenta)*100, 1), '%')),
+            vjust = 1.5, color = "black",
+            size = 4)
+
+
+
+```
+
+Las proporciones de los valores correspondientes a Macri tienen cierta similitud con los de Cristina.
+
+```{r}
+
+#Limpieza y creación de vector
+BasePichettoNRC <- gsub("http.*","",TweetsMigelAPichetto$text)
+BasePichettoNRC <- gsub("https.*","",TweetsMigelAPichetto$text)
+BasePichettoNRC <- gsub("#\\w+","",TweetsMigelAPichetto$text)
+BasePichettoNRC <- gsub("@\\w+","",TweetsMigelAPichetto$text)
+BasePichettoNRC <- gsub("[[:punct:]]","",TweetsMigelAPichetto$text)
+BasePichettoNRC <- gsub("\\w*[0-9]+\\w*\\s*", "",TweetsMigelAPichetto$text)
+BasePichettoNRC <- gsub("rt ", "", TweetsMigelAPichetto$text)
+BasePichettoNRC <- gsub("RT ", "", TweetsMigelAPichetto$text)
+BasePichettoNRC <- gsub("\n", "", TweetsMigelAPichetto$text)
+
+#carga de diccionario NRC
+Pichettonrc_data <- get_nrc_sentiment(char_v = BasePichettoNRC, language = 'spanish')
+
+Pichettonrc_data <- Pichettonrc_data %>% 
+  rename('anticipación'=anticipation,
+           'ira'=anger,
+           'disgusto'=disgust,
+           'miedo'=fear,
+           'alegría'=joy,
+           'tristeza'=sadness,
+           'sorpresa'=surprise,
+           'confianza'=trust,
+           'negativa'=negative,
+           'positiva'=positive)
+
+#Manipulación de data
+base_emocionPichetto <- data.frame(t(Pichettonrc_data))
+base_emocionPichetto <- data.frame(rowSums(base_emocionPichetto))
+names(base_emocionPichetto)[1] <- "cuenta"
+base_emocionPichetto <- cbind('sentimiento'=rownames(base_emocionPichetto), base_emocionPichetto)
+rownames(base_emocionPichetto) <- NULL
+
+#Graficamos
+ggplot(base_emocionPichetto[1:8,], aes(x = sentimiento, y = round(cuenta/sum(cuenta)*100, 1), fill = sentimiento)) + 
+  geom_bar(stat = "identity") +
+  labs(title='Elecciones Miguel A Pichetto - Sentiment Analysis (NRC)',
+       subtitle = 'Trabajo Final Taller de Análisis de Texto del CPS',
+       caption='Fuente: Twitter',
+       x = "Sentimiento", 
+       y = "Frecuencia") +
+  geom_text(aes(label = paste(round(cuenta/sum(cuenta)*100, 1), '%')),
+            vjust = 1.5, color = "black",
+            size = 4)
+
+
+
+```
+
+
+Los valores correspondientes a Pichetto muestran niveles de confianza superiores a Macri, situación que probablemente encuentre explicación en su intensidad en los últimos dias de campaña junto a Macri.
+
+
+A continuación avanzaremos aun mas con la idea de correr un algoritmo de clasificación denominado LDA.
+
+```{r}
+#Limpieza
+
+BaseTweets$text <- gsub("#\\w+","",BaseTweets$text)
+BaseTweets$text <- gsub("@\\w+","",BaseTweets$text)
+BaseTweets$text <- gsub("http.*","",BaseTweets$text)
+BaseTweets$text <- gsub("https.*","",BaseTweets$text)
+BaseTweets$text <- gsub("[[:punct:]]","",BaseTweets$text)
+BaseTweets$text <- gsub("\\w*[0-9]+\\w*\\s*", "",BaseTweets$text)
+
+expresion <- rx() %>% 
+  rx_find('RT')
+BaseTweets$text <- gsub(expresion, '', BaseTweets$text)
+expresion2 <- rx() %>% 
+  rx_find('\n')
+BaseTweets$text <- gsub(expresion2, '', BaseTweets$text)
+
+BaseTweets2 <- BaseTweets %>% 
+  filter(text!='')
+
+BaseTweets2 <- BaseTweets2 %>% 
+  mutate(id=as.numeric(rownames(.)))
+
+base_dtm <- BaseTweets2 %>%
+  unnest_tokens(input=text, output=word, token = 'tweets') %>% 
+  filter(!word%in%stopwords('es')) %>%
+  filter(!word%in%palabras_inutiles) %>%
+  filter(str_detect(word, "^[a-zA-z]"))%>%
+  filter(!str_detect(word, "^[http]"))%>%
+  count(id, word) %>% 
+  cast_dtm(document=id, term=word, value=n)
+
+#Modelo
+
+
+base_lda <- LDA(base_dtm, #nuestro dtm
+                k = 2, #cantidad de grupos
+                method = "Gibbs", #método algorítmico
+                control = list(seed = 42, #reproducibilidad
+                               iter = 4000, #cantidad de iteraciones del modelo
+                               thin = 50, #selección de modelos (viene de C)
+                               burnin = 30, #cuantos descarta al principio
+                               alpha=0.5)) #reparto de las categorías (confianza de que es la etiqueta)
+
+base_lda #se observa que se creó el modelo con los dos grupos solicitados
+
+```
+
+```{r}
+
+tidy(base_lda, 
+     'gamma') 
+
+tidy(base_lda, 
+     'beta')
+```
+
+```{r}
+base_gamma <- tidy(base_lda, 'gamma') %>% #el proceso de ordenamiento
+  group_by(document) %>% #agrupamos por documento
+  slice(which.max(gamma)) #pedimos que devuelva sólo aquel que tenga mayor gamma de los dos
+
+base_gamma
+```
+
+
+```{r}
+base_gamma <- base_gamma %>% 
+  mutate(id=as.numeric(document))
+
+base_topics <- left_join(BaseTweets2, base_gamma)
+
+
+base_topics2 <- base_topics %>% 
+  filter(!is.na(topic))
+
+
+base_topics_clean <- base_topics2 %>% 
+  select(text, topic, gamma, favorited, isRetweet, created)
+
+base_topics_clean %>% head()
+```
+
+
+```{r}
+base_topics_clean2 <- base_topics_clean %>% 
+  filter(gamma>=0.9)
+
+table(base_topics_clean2$topic)
+```
+
+
+```{r}
+
+as.matrix(terms(base_lda,10))
+
+
+```
+
+Se aprecia en este primer intento de modelo, que los tópicos fueron separados principalmente en aquellos que nombran a los sujetos políticos en cuestión (grupo 2) y los que mencionan palabras cercanas a considerarlas neutras. De cualquier manera, este primer intento debería profundizarse mediante una mayor limpieza de los términos y una regulación de los parametros del modelo. 
