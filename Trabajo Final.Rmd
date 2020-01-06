@@ -1017,3 +1017,10 @@ as.matrix(terms(base_lda,10))
 ```
 
 Se aprecia en este primer intento de modelo, que los tópicos fueron separados principalmente en aquellos que nombran a los sujetos políticos en cuestión (grupo 2) y los que mencionan palabras cercanas a considerarlas neutras. De cualquier manera, este primer intento debería profundizarse mediante una mayor limpieza de los términos y una regulación de los parametros del modelo. 
+
+
+
+# Conclusiones:
+
+A partir de este ejercicio cuyo contenido pedagógico se configuró como un esbozo del abordaje de Twitter mediante el análisis de sentimiento, fue posible la practica de un conjunto de herramientas orientadas a la observación de las relaciones exixtentes en la mencionada red social. El tópico que sirvió como excusa fueron las menciones de los candidatos de las principales formulas electorales durante los días de las PASO. Los resultados obtenidos evidenciaron la buena imagen de Alberto Fernandez en detrimiento de la de Mauricio Macri y Cristina Fernandez. Al mismo tiempo, las principales palabras negativas adosadas a los candidatos de la oposición se vinculaban con la dimensión de la corrupción mientras que en el oficialismo de ese entonces las palabras "hambre" y "culpa" evidenciaban que la mirada del votante opositor se dirigía hacia las consecuencias del gobierno de Mauricio Macri y el aumento de la desigualdad y la pobreza.  
+De esta manera, queda pendiente para una futura entrega la profundización del modelo de análisis buscado y el aumento en la recolección de tweets de modo tal que sea posible indagar los comportamientos de los resultados al calor de una mayor cantidad de insumo para los mismos.
